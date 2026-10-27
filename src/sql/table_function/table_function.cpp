@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/table_function/table_function.h"
+#include "sql/table_function/file_table_function.h"
 #include "sql/resolver/dml/ob_dml_resolver.h"
 #include "sql/parser/parse_node.h"
 #include "lib/charset/ob_charset.h"
@@ -32,6 +33,8 @@ int bind_generator(ObDMLResolver &resolver, const TableFunctionCall &call, Table
 { return resolver.bind_generator_table_function(call, item); }
 int bind_json_table(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
 { return resolver.bind_json_table_function(call, item); }
+int bind_file_table(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
+{ return resolver.bind_file_table_function(call, item); }
 int bind_hybrid(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
 { return resolver.bind_hybrid_table_function(call, item); }
 TableFunctionColumn generator_column()
@@ -53,7 +56,10 @@ const TableFunctionDescriptor BUILTINS[] = {
   {JSON_TABLE_FUNCTION_ID, "json_table", "json_table(document, path COLUMNS (...))",
    "Columns are declared by COLUMNS.", 0, -1, nullptr, 0, bind_json_table, create_json_table_scan, nullptr, nullptr, 0, compile_json_table_options, true},
   {HYBRID_SEARCH_FUNCTION_ID, "hybrid_search", "hybrid_search(table_name, configuration)",
-   "Columns come from the bound search query.", 2, 2, nullptr, 0, bind_hybrid, nullptr}
+   "Columns come from the bound search query.", 2, 2, nullptr, 0, bind_hybrid, nullptr},
+  {READ_CSV_FUNCTION_ID, "read_csv", "read_csv(path)",
+   "Infers columns from the CSV header and scans the file.", 1, 1, nullptr, 0,
+   bind_file_table, create_read_csv_scan}
 };
 }
 

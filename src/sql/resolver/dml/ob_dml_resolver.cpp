@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/table_function/table_function.h"
+#include "sql/table_function/file_table_function.h"
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
 #include "sql/resolver/dml/ob_view_table_resolver.h"
@@ -3578,6 +3579,50 @@ int ObDMLResolver::bind_json_table_function(const TableFunctionCall &call, Table
     item->table_function_id_ = call.descriptor_->id_;
     item->table_function_requires_all_columns_ = call.descriptor_->requires_all_columns_;
     item->type_ = TableItem::FUNCTION_TABLE;
+  }
+  return ret;
+}
+
+int ObDMLResolver::bind_file_table_function(const TableFunctionCall &call, TableItem *&item)
+{
+  int ret = OB_SUCCESS;
+  // Schema-free file tables infer their columns from the file itself, so the path
+  // has to be known while resolving.  Only string literals are accepted: reading
+  // an arbitrary expression here would make the plan depend on runtime values.
+  ObString path;
+  ObSEArray<FileTableColumn, 16> columns;
+  if (OB_ISNULL(call.arguments_) || call.arguments_->num_child_ < 1) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_USER_ERROR(OB_INVALID_ARGUMENT, "file table function requires a file path");
+  } else {
+    const ParseNode *path_node = call.arguments_->children_[0];
+    if (OB_ISNULL(path_node) || OB_ISNULL(path_node->str_value_) || path_node->str_len_ <= 0) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "file table function path must be a string literal");
+    } else {
+      path.assign_ptr(path_node->str_value_, static_cast<int32_t>(path_node->str_len_));
+    }
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_FAIL(infer_csv_file_schema(path, *allocator_, columns))) {
+  } else if (OB_FAIL(create_function_scan_item(call, item))) {
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {
+      ObObjMeta meta;
+      ObAccuracy accuracy;
+      meta.set_type(columns.at(i).type_);
+      if (ObVarcharType == columns.at(i).type_) {
+        meta.set_collation_level(CS_LEVEL_IMPLICIT);
+        meta.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+        accuracy.set_length(1024);
+      }
+      ColumnItem *bound = nullptr;
+      ret = resolve_function_table_column_item(*item, meta, accuracy, columns.at(i).name_,
+                                               OB_APP_MIN_COLUMN_ID + i, bound);
+      if (OB_SUCC(ret) && !columns.at(i).nullable_) {
+        bound->expr_->set_result_flag(NOT_NULL_FLAG);
+      }
+    }
   }
   return ret;
 }
