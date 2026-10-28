@@ -119,6 +119,7 @@ namespace share
   static const char* const OB_SV_REGEXP_TIME_LIMIT = "regexp_time_limit";
   static const char* const OB_SV_PROFILING = "profiling";
   static const char* const OB_SV_PROFILING_HISTORY_SIZE = "profiling_history_size";
+  static const char* const OB_SV_ENABLE_FILE_SQL = "enable_file_sql";
   static const char* const OB_SV_LOG_LEVEL = "ob_log_level";
   static const char* const OB_SV_QUERY_TIMEOUT = "ob_query_timeout";
   static const char* const OB_SV_READ_CONSISTENCY = "ob_read_consistency";

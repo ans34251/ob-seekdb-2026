@@ -3595,7 +3595,13 @@ int ObDMLResolver::bind_file_table_function(const TableFunctionCall &call, Table
   // an arbitrary expression here would make the plan depend on runtime values.
   ObString path;
   ObSEArray<FileTableColumn, 16> columns;
-  if (OB_ISNULL(call.arguments_) || call.arguments_->num_child_ < 1) {
+  bool file_sql_enabled = false;
+  if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, file_sql_enabled))) {
+  } else if (!file_sql_enabled) {
+    // File access is off by default; the switch is checked before any path is read.
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "file table function, set session enable_file_sql = ON first");
+  } else if (OB_ISNULL(call.arguments_) || call.arguments_->num_child_ < 1) {
     ret = OB_INVALID_ARGUMENT;
     LOG_USER_ERROR(OB_INVALID_ARGUMENT, "file table function requires a file path");
   } else {
@@ -3634,7 +3640,12 @@ int ObDMLResolver::bind_file_table_function(const TableFunctionCall &call, Table
 int ObDMLResolver::bind_glob_table_function(const TableFunctionCall &call, TableItem *&item)
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(create_function_scan_item(call, item))) {
+  bool file_sql_enabled = false;
+  if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, file_sql_enabled))) {
+  } else if (!file_sql_enabled) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "file table function, set session enable_file_sql = ON first");
+  } else if (OB_FAIL(create_function_scan_item(call, item))) {
   } else {
     // glob exposes one VARCHAR column holding each matched path.
     ObObjMeta meta;
