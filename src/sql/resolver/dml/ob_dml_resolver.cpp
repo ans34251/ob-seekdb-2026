@@ -3487,13 +3487,17 @@ int ObDMLResolver::resolve_registered_table_function(const ParseNode &node, Tabl
     call.options_ = &node;
     call.alias_ = node.children_[4];
     call.column_aliases_ = node.children_[5];
-  } else if (node.type_ != T_TABLE_FUNCTION_CALL || node.num_child_ != 4 || node.children_[0] == nullptr) {
+  } else if (node.type_ != T_TABLE_FUNCTION_CALL ||
+             (node.num_child_ != 4 && node.num_child_ != 5) || node.children_[0] == nullptr) {
     ret = OB_ERR_UNEXPECTED;
   } else {
     call.name_.assign_ptr(node.children_[0]->str_value_, node.children_[0]->str_len_);
     call.arguments_ = node.children_[1];
     call.alias_ = node.children_[2];
     call.column_aliases_ = node.children_[3];
+    // The fifth child carries named options (header = true, ...) when the
+    // grammar produced them; positional-only calls stay at four children.
+    call.options_ = (5 == node.num_child_) ? node.children_[4] : nullptr;
   }
   if (OB_SUCC(ret)) {
     call.descriptor_ = TableFunctionRegistry::find(call.name_);
