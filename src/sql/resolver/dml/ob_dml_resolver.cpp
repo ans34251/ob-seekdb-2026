@@ -3478,6 +3478,30 @@ int ObDMLResolver::resolve_str_const(const ParseNode &parse_tree, ObString& path
   return ret;
 }
 
+namespace {
+// A named option such as `header = true` is parsed as `T_OP_EQ(ident, expr)` and
+// travels inside the argument list; positional arguments never have this shape.
+bool is_table_function_option(const ParseNode *node)
+{
+  return OB_NOT_NULL(node) && T_OP_EQ == node->type_ && 2 == node->num_child_ &&
+         OB_NOT_NULL(node->children_) && OB_NOT_NULL(node->children_[0]) &&
+         T_IDENT == node->children_[0]->type_;
+}
+
+int64_t count_table_function_positional_args(const ParseNode *arguments)
+{
+  int64_t count = 0;
+  if (OB_NOT_NULL(arguments)) {
+    for (int64_t i = 0; i < arguments->num_child_; ++i) {
+      if (!is_table_function_option(arguments->children_[i])) {
+        ++count;
+      }
+    }
+  }
+  return count;
+}
+} // namespace
+
 int ObDMLResolver::resolve_registered_table_function(const ParseNode &node, TableItem *&item)
 {
   int ret = OB_SUCCESS;
@@ -3501,7 +3525,7 @@ int ObDMLResolver::resolve_registered_table_function(const ParseNode &node, Tabl
   }
   if (OB_SUCC(ret)) {
     call.descriptor_ = TableFunctionRegistry::find(call.name_);
-    const int64_t argc = call.arguments_ == nullptr ? 0 : call.arguments_->num_child_;
+    const int64_t argc = count_table_function_positional_args(call.arguments_);
     if (call.descriptor_ == nullptr) {
       ret = OB_ERR_FUNCTION_UNKNOWN;
       LOG_USER_ERROR(OB_ERR_FUNCTION_UNKNOWN, "TABLE FUNCTION", call.name_.length(), call.name_.ptr());
@@ -3528,9 +3552,13 @@ int ObDMLResolver::create_function_scan_item(const TableFunctionCall &call, Tabl
     ret = OB_ALLOCATE_MEMORY_FAILED;
   }
   OZ (params_.expr_factory_->create_raw_expr(T_OP_ROW, arguments));
-  const int64_t argc = call.arguments_ == nullptr ? 0 : call.arguments_->num_child_;
+  const int64_t argc = count_table_function_positional_args(call.arguments_);
   OZ (arguments->init_param_exprs(argc));
-  for (int64_t i = 0; OB_SUCC(ret) && i < argc; ++i) {
+  for (int64_t i = 0; OB_SUCC(ret) && OB_NOT_NULL(call.arguments_) &&
+                     i < call.arguments_->num_child_; ++i) {
+    if (is_table_function_option(call.arguments_->children_[i])) {
+      continue;  // named options belong to the binder, not to the scan arguments
+    }
     ObRawExpr *arg = nullptr;
     const bool old = params_.is_resolve_table_function_expr_;
     params_.is_resolve_table_function_expr_ = true;
