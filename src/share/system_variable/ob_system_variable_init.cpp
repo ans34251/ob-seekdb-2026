@@ -9910,17 +9910,6 @@ static struct VarsInit{
       ObSysVars[718].base_value_ = "0" ;
     ObSysVars[718].alias_ = "OB_SV_SPARSE_DROP_RATIO_SEARCH" ;
     }();
-    [&] (){
-      ObSysVars[719].default_value_ = "0" ;
-      ObSysVars[719].info_ = "allow table functions to read local files" ;
-      ObSysVars[719].name_ = "enable_file_sql" ;
-      ObSysVars[719].data_type_ = ObIntType ;
-      ObSysVars[719].flags_ = ObSysVarFlag::SESSION_SCOPE ;
-      ObSysVars[719].id_ = SYS_VAR_ENABLE_FILE_SQL ;
-      cur_max_var_id = MAX(cur_max_var_id, static_cast<int64_t>(SYS_VAR_ENABLE_FILE_SQL)) ;
-      ObSysVarsIdToArrayIdx[SYS_VAR_ENABLE_FILE_SQL] = 719 ;
-      ObSysVars[719].base_value_ = "0" ;
-    }();
 
     if (cur_max_var_id >= ObSysVarMeta::OB_MAX_SYS_VAR_ID) {
       HasInvalidSysVar = true;
