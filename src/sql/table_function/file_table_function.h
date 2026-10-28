@@ -24,6 +24,7 @@ namespace sql
 {
 
 constexpr uint64_t READ_CSV_FUNCTION_ID = 5;
+constexpr uint64_t GLOB_FUNCTION_ID = 6;
 
 // Column inferred from a file.  The resolver registers one ColumnItem per entry,
 // the scan converts every field with the same type class.
@@ -42,6 +43,9 @@ int infer_csv_file_schema(const common::ObString &path,
                           common::ObIArray<FileTableColumn> &columns);
 
 int create_read_csv_scan(const TableFunctionScanContext &context, ITableFunctionScan *&scan);
+
+// Expands a local glob pattern into one row per matching path.
+int create_glob_scan(const TableFunctionScanContext &context, ITableFunctionScan *&scan);
 
 } // namespace sql
 } // namespace oceanbase

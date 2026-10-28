@@ -35,6 +35,8 @@ int bind_json_table(ObDMLResolver &resolver, const TableFunctionCall &call, Tabl
 { return resolver.bind_json_table_function(call, item); }
 int bind_file_table(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
 { return resolver.bind_file_table_function(call, item); }
+int bind_glob_table(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
+{ return resolver.bind_glob_table_function(call, item); }
 int bind_hybrid(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
 { return resolver.bind_hybrid_table_function(call, item); }
 TableFunctionColumn generator_column()
@@ -59,7 +61,10 @@ const TableFunctionDescriptor BUILTINS[] = {
    "Columns come from the bound search query.", 2, 2, nullptr, 0, bind_hybrid, nullptr},
   {READ_CSV_FUNCTION_ID, "read_csv", "read_csv(path)",
    "Infers columns from the CSV header and scans the file.", 1, 1, nullptr, 0,
-   bind_file_table, create_read_csv_scan}
+   bind_file_table, create_read_csv_scan},
+  {GLOB_FUNCTION_ID, "glob", "glob(pattern)",
+   "Expands a local glob pattern into one row per matching path.", 1, 1, nullptr, 0,
+   bind_glob_table, create_glob_scan}
 };
 }
 

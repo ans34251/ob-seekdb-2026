@@ -3627,6 +3627,28 @@ int ObDMLResolver::bind_file_table_function(const TableFunctionCall &call, Table
   return ret;
 }
 
+int ObDMLResolver::bind_glob_table_function(const TableFunctionCall &call, TableItem *&item)
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(create_function_scan_item(call, item))) {
+  } else {
+    // glob exposes one VARCHAR column holding each matched path.
+    ObObjMeta meta;
+    ObAccuracy accuracy;
+    meta.set_type(ObVarcharType);
+    meta.set_collation_level(CS_LEVEL_IMPLICIT);
+    meta.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+    accuracy.set_length(1024);
+    ColumnItem *bound = nullptr;
+    ret = resolve_function_table_column_item(*item, meta, accuracy, ObString::make_string("file"),
+                                             OB_APP_MIN_COLUMN_ID, bound);
+    if (OB_SUCC(ret)) {
+      bound->expr_->set_result_flag(NOT_NULL_FLAG);
+    }
+  }
+  return ret;
+}
+
 int ObDMLResolver::bind_fixed_table_function(const TableFunctionCall &call, TableItem *&item)
 {
   int ret = OB_SUCCESS;

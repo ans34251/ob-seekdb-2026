@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <strings.h>
+#include <glob.h>
 #include "lib/ob_errno.h"
 #include "lib/utility/utility.h"
 #include "sql/engine/ob_exec_context.h"
@@ -517,6 +518,98 @@ private:
   ObSEArray<ObObj, 16> cells_;
   ObNewRow row_;
 };
+class GlobScan final : public ITableFunctionScan
+{
+public:
+  explicit GlobScan(const TableFunctionScanContext &context)
+    : arguments_(context.arguments_), projection_(context.column_ids_), allocator_("GlobScan"),
+      index_(0)
+  {
+    row_.cells_ = &cell_;
+    row_.count_ = 0;
+  }
+  ~GlobScan() override { (void) close(); }
+
+  int open() override { return rescan(arguments_); }
+
+  int rescan(const ObIArray<ObObj> &arguments) override
+  {
+    int ret = OB_SUCCESS;
+    paths_.reuse();
+    index_ = 0;
+    allocator_.reuse();
+    row_.count_ = projection_.count();
+    if (arguments.count() < 1 || arguments.at(0).is_null()) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "glob requires a non-NULL pattern");
+    } else {
+      const ObString pattern = arguments.at(0).get_string();
+      char pattern_buf[1024];
+      if (pattern.empty() || pattern.length() >= static_cast<int64_t>(sizeof(pattern_buf))) {
+        ret = OB_INVALID_ARGUMENT;
+        LOG_USER_ERROR(OB_INVALID_ARGUMENT, "glob requires a valid pattern");
+      } else {
+        MEMCPY(pattern_buf, pattern.ptr(), pattern.length());
+        pattern_buf[pattern.length()] = '\0';
+        glob_t matches;
+        memset(&matches, 0, sizeof(matches));
+        const int rc = ::glob(pattern_buf, 0, nullptr, &matches);
+        if (0 != rc && GLOB_NOMATCH != rc) {
+          ret = OB_IO_ERROR;
+          LOG_WARN("failed to expand glob pattern", K(ret), K(pattern));
+        } else if (0 == rc) {
+          for (size_t i = 0; OB_SUCC(ret) && i < matches.gl_pathc; ++i) {
+            const char *path = matches.gl_pathv[i];
+            const int64_t length = static_cast<int64_t>(strlen(path));
+            char *copy = static_cast<char *>(allocator_.alloc(length));
+            if (OB_ISNULL(copy)) {
+              ret = OB_ALLOCATE_MEMORY_FAILED;
+            } else {
+              MEMCPY(copy, path, length);
+              ret = paths_.push_back(ObString(static_cast<int32_t>(length), copy));
+            }
+          }
+        }
+        ::globfree(&matches);
+      }
+    }
+    return ret;
+  }
+
+  int get_next_row(ObNewRow *&row) override
+  {
+    int ret = OB_SUCCESS;
+    if (index_ >= paths_.count()) {
+      ret = OB_ITER_END;
+    } else {
+      cell_.set_varchar(paths_.at(index_));
+      cell_.set_collation_level(CS_LEVEL_IMPLICIT);
+      cell_.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+      row_.cells_ = &cell_;
+      row_.count_ = projection_.count();
+      row = &row_;
+      ++index_;
+    }
+    return ret;
+  }
+
+  int close() override
+  {
+    paths_.reuse();
+    index_ = 0;
+    allocator_.reset();
+    return OB_SUCCESS;
+  }
+
+private:
+  const ObIArray<ObObj> &arguments_;
+  const ObIArray<uint64_t> &projection_;
+  ObArenaAllocator allocator_;
+  ObSEArray<ObString, 16> paths_;
+  int64_t index_;
+  ObObj cell_;
+  ObNewRow row_;
+};
 } // namespace
 
 int infer_csv_file_schema(const ObString &path, ObIAllocator &allocator,
@@ -541,6 +634,13 @@ int create_read_csv_scan(const TableFunctionScanContext &context, ITableFunction
   void *memory = context.allocator_.alloc(sizeof(ReadCsvScan));
   if (OB_ISNULL(memory)) { return OB_ALLOCATE_MEMORY_FAILED; }
   scan = new (memory) ReadCsvScan(context);
+  return OB_SUCCESS;
+}
+int create_glob_scan(const TableFunctionScanContext &context, ITableFunctionScan *&scan)
+{
+  void *memory = context.allocator_.alloc(sizeof(GlobScan));
+  if (OB_ISNULL(memory)) { return OB_ALLOCATE_MEMORY_FAILED; }
+  scan = new (memory) GlobScan(context);
   return OB_SUCCESS;
 }
 } // namespace sql
