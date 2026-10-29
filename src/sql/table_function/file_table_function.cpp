@@ -25,6 +25,8 @@
 #include "lib/ob_errno.h"
 #include "lib/utility/utility.h"
 #include "sql/engine/ob_exec_context.h"
+#include "common/json_type/ob_json_parse.h"
+#include "common/json_type/ob_json_tree.h"
 
 namespace oceanbase
 {
@@ -612,6 +614,305 @@ private:
 };
 } // namespace
 
+// --- JSONL (newline-delimited JSON) support ---
+namespace
+{
+
+// Converts a JSON node's value to its text representation for type inference
+// and field conversion.  The text matches what classify_field() expects.
+int json_node_to_text(ObJsonNode *node, ObIAllocator &allocator, ObString &text)
+{
+  int ret = OB_SUCCESS;
+  text.reset();
+  if (OB_ISNULL(node)) {
+    // NULL node → empty text (treated as SQL NULL)
+  } else {
+    switch (node->json_type()) {
+      case ObJsonNodeType::J_NULL:
+        // empty text
+        break;
+      case ObJsonNodeType::J_BOOLEAN: {
+        bool val = static_cast<ObJsonBoolean *>(node)->value();
+        text = val ? ObString("true") : ObString("false");
+        break;
+      }
+      case ObJsonNodeType::J_INT: {
+        int64_t val = static_cast<ObJsonInt *>(node)->value();
+        char buf[32];
+        int len = snprintf(buf, sizeof(buf), "%ld", val);
+        char *copy = static_cast<char *>(allocator.alloc(len));
+        if (OB_ISNULL(copy)) { ret = OB_ALLOCATE_MEMORY_FAILED; }
+        else { MEMCPY(copy, buf, len); text.assign_ptr(copy, len); }
+        break;
+      }
+      case ObJsonNodeType::J_UINT: {
+        uint64_t val = static_cast<ObJsonUint *>(node)->value();
+        char buf[32];
+        int len = snprintf(buf, sizeof(buf), "%lu", val);
+        char *copy = static_cast<char *>(allocator.alloc(len));
+        if (OB_ISNULL(copy)) { ret = OB_ALLOCATE_MEMORY_FAILED; }
+        else { MEMCPY(copy, buf, len); text.assign_ptr(copy, len); }
+        break;
+      }
+      case ObJsonNodeType::J_DOUBLE: {
+        double val = static_cast<ObJsonDouble *>(node)->value();
+        char buf[64];
+        int len = snprintf(buf, sizeof(buf), "%.15g", val);
+        char *copy = static_cast<char *>(allocator.alloc(len));
+        if (OB_ISNULL(copy)) { ret = OB_ALLOCATE_MEMORY_FAILED; }
+        else { MEMCPY(copy, buf, len); text.assign_ptr(copy, len); }
+        break;
+      }
+      case ObJsonNodeType::J_DECIMAL: {
+        // Decimal: convert via to_string
+        char buf[256];
+        int64_t pos = static_cast<ObJsonDecimal *>(node)->value().to_string(buf, sizeof(buf));
+        char *copy = static_cast<char *>(allocator.alloc(static_cast<int32_t>(pos)));
+        if (OB_ISNULL(copy)) { ret = OB_ALLOCATE_MEMORY_FAILED; }
+        else { MEMCPY(copy, buf, pos); text.assign_ptr(copy, static_cast<int32_t>(pos)); }
+        break;
+      }
+      case ObJsonNodeType::J_STRING: {
+        text = static_cast<ObJsonString *>(node)->value();
+        break;
+      }
+      default: {
+        // Objects, arrays, opaque → serialize to text (fallback)
+        // For competition data this won't happen; treat as empty.
+        break;
+      }
+    }
+  }
+  return ret;
+}
+
+// Parses a JSONL buffer into the same flat row-major field array as CSV.
+// Row 0 is a synthetic header containing the key-union names.
+int parse_jsonl_buffer(const char *data, int64_t size, ObIAllocator &allocator,
+                       ObIArray<ObString> &fields, int64_t &row_count, int64_t &column_count)
+{
+  int ret = OB_SUCCESS;
+  fields.reuse();
+  row_count = 0;
+  column_count = 0;
+
+  // Step 1: split into lines
+  ObSEArray<ObString, 16> lines;
+  int64_t pos = 0;
+  while (OB_SUCC(ret) && pos < size) {
+    int64_t start = pos;
+    while (pos < size && data[pos] != '\n') { ++pos; }
+    // trim trailing \r
+    int64_t end = pos;
+    if (end > start && data[end - 1] == '\r') { --end; }
+    if (end > start) {
+      lines.push_back(ObString(static_cast<int32_t>(end - start), data + start));
+    }
+    if (pos < size) { ++pos; } // skip '\n'
+  }
+
+  // Step 2: parse each line into JSON tree, collect key union
+  ObSEArray<ObJsonNode *, 16> trees;
+  ObSEArray<ObString, 16> key_union;
+  for (int64_t i = 0; OB_SUCC(ret) && i < lines.count(); ++i) {
+    ObJsonNode *tree = nullptr;
+    if (OB_FAIL(ObJsonParser::get_tree(&allocator, lines.at(i), tree))) {
+      LOG_WARN("failed to parse JSONL line", K(ret), K(i));
+    } else if (OB_ISNULL(tree) || tree->json_type() != ObJsonNodeType::J_OBJECT) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_WARN("JSONL line is not a JSON object", K(ret), K(i));
+    } else {
+      trees.push_back(tree);
+      ObJsonObject *obj = static_cast<ObJsonObject *>(tree);
+      for (uint64_t k = 0; OB_SUCC(ret) && k < obj->element_count(); ++k) {
+        ObString key;
+        if (OB_FAIL(obj->get_key(k, key))) {
+        } else {
+          // add to union if not already present
+          bool found = false;
+          for (int64_t u = 0; !found && u < key_union.count(); ++u) {
+            if (key_union.at(u) == key) { found = true; }
+          }
+          if (!found) { ret = key_union.push_back(key); }
+        }
+      }
+    }
+  }
+
+  if (OB_FAIL(ret)) { return ret; }
+  column_count = key_union.count();
+
+  // Step 3: build synthetic header row
+  for (int64_t c = 0; OB_SUCC(ret) && c < column_count; ++c) {
+    ret = fields.push_back(key_union.at(c));
+  }
+  row_count = 1; // header row
+
+  // Step 4: build data rows
+  for (int64_t r = 0; OB_SUCC(ret) && r < trees.count(); ++r) {
+    ObJsonObject *obj = static_cast<ObJsonObject *>(trees.at(r));
+    for (int64_t c = 0; OB_SUCC(ret) && c < column_count; ++c) {
+      ObJsonNode *val_node = obj->get_value(key_union.at(c));
+      ObString text;
+      if (OB_FAIL(json_node_to_text(val_node, allocator, text))) {
+      } else {
+        ret = fields.push_back(text);
+      }
+    }
+    ++row_count;
+  }
+  return ret;
+}
+
+class ReadJsonScan final : public ITableFunctionScan
+{
+public:
+  explicit ReadJsonScan(const TableFunctionScanContext &context)
+    : arguments_(context.arguments_), projection_(context.column_ids_), allocator_("ReadJson"),
+      data_(nullptr), size_(0), row_count_(0), column_count_(0), row_index_(0)
+  {
+    row_.cells_ = nullptr;
+    row_.count_ = 0;
+  }
+  ~ReadJsonScan() override { (void) close(); }
+
+  int open() override { return rescan(arguments_); }
+
+  int rescan(const ObIArray<ObObj> &arguments) override
+  {
+    int ret = OB_SUCCESS;
+    data_ = nullptr;
+    size_ = 0;
+    row_count_ = 0;
+    column_count_ = 0;
+    row_index_ = 0;
+    allocator_.reuse();
+    fields_.reuse();
+    type_classes_.reuse();
+    values_.reuse();
+    cells_.reuse();
+    if (arguments.count() < 1 || arguments.at(0).is_null()) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "read_json requires a non-NULL file path");
+    } else if (OB_FAIL(read_whole_file(arguments.at(0).get_string(), allocator_, data_, size_))) {
+    } else if (OB_FAIL(parse_jsonl_buffer(data_, size_, allocator_, fields_, row_count_, column_count_))) {
+    } else if (OB_FAIL(build_type_classes())) {
+    } else {
+      for (int64_t i = 0; OB_SUCC(ret) && i < column_count_; ++i) {
+        ret = values_.push_back(ObObj());
+      }
+      for (int64_t i = 0; OB_SUCC(ret) && i < projection_.count(); ++i) {
+        ret = cells_.push_back(ObObj());
+      }
+      row_.count_ = cells_.count();
+    }
+    return ret;
+  }
+
+  int get_next_row(ObNewRow *&row) override
+  {
+    int ret = OB_SUCCESS;
+    if (row_index_ + 1 >= row_count_) {
+      ret = OB_ITER_END;
+    } else {
+      const int64_t source_row = row_index_ + 1;  // row 0 is the synthetic header
+      for (int64_t c = 0; OB_SUCC(ret) && c < column_count_; ++c) {
+        const int64_t index = source_row * column_count_ + c;
+        const ObString field = index < fields_.count() ? fields_.at(index) : ObString();
+        ret = convert_field(field, type_classes_.at(c), values_.at(c));
+      }
+      for (int64_t i = 0; OB_SUCC(ret) && i < projection_.count(); ++i) {
+        const int64_t position = static_cast<int64_t>(projection_.at(i)) - OB_APP_MIN_COLUMN_ID;
+        if (position < 0 || position >= values_.count()) {
+          ret = OB_ERR_UNEXPECTED;
+        } else {
+          cells_.at(i) = values_.at(position);
+        }
+      }
+      if (OB_SUCC(ret)) {
+        row_.cells_ = cells_.get_data();
+        row_.count_ = cells_.count();
+        row = &row_;
+        ++row_index_;
+      }
+    }
+    return ret;
+  }
+
+  int close() override
+  {
+    data_ = nullptr;
+    size_ = 0;
+    row_count_ = 0;
+    column_count_ = 0;
+    row_index_ = 0;
+    allocator_.reset();
+    return OB_SUCCESS;
+  }
+
+private:
+  int build_type_classes()
+  {
+    int ret = OB_SUCCESS;
+    type_classes_.reuse();
+    for (int64_t c = 0; OB_SUCC(ret) && c < column_count_; ++c) {
+      int type_class = CTC_NULL;
+      for (int64_t r = 1; OB_SUCC(ret) && r < row_count_; ++r) {
+        const int64_t index = r * column_count_ + c;
+        const ObString field = index < fields_.count() ? fields_.at(index) : ObString();
+        type_class = merge_type_class(type_class, classify_field(field));
+      }
+      ret = type_classes_.push_back(type_class);
+    }
+    return ret;
+  }
+
+  int convert_field(const ObString &text, int type_class, ObObj &value)
+  {
+    int ret = OB_SUCCESS;
+    if (CTC_NULL == type_class || text.empty()) {
+      value.set_null();
+    } else if (CTC_BOOL == type_class) {
+      value.set_tinyint(0 == strncasecmp(text.ptr(), "true", 4) ? 1 : 0);
+    } else if (CTC_INT == type_class) {
+      value.set_int(strtoll(text.ptr(), nullptr, 10));
+    } else if (CTC_DOUBLE == type_class) {
+      value.set_double(strtod(text.ptr(), nullptr));
+    } else if (CTC_DATETIME == type_class && text.length() > 10 && 'T' == text.ptr()[10]) {
+      char *copy = static_cast<char *>(allocator_.alloc(text.length()));
+      if (OB_ISNULL(copy)) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        MEMCPY(copy, text.ptr(), text.length());
+        copy[10] = ' ';
+        value.set_varchar(ObString(static_cast<int32_t>(text.length()), copy));
+        value.set_collation_level(CS_LEVEL_IMPLICIT);
+        value.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+      }
+    } else {
+      value.set_varchar(text);
+      value.set_collation_level(CS_LEVEL_IMPLICIT);
+      value.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+    }
+    return ret;
+  }
+
+  const ObIArray<ObObj> &arguments_;
+  const ObIArray<uint64_t> &projection_;
+  ObArenaAllocator allocator_;
+  char *data_;
+  int64_t size_;
+  int64_t row_count_;
+  int64_t column_count_;
+  int64_t row_index_;
+  ObSEArray<ObString, 64> fields_;
+  ObSEArray<int, 16> type_classes_;
+  ObSEArray<ObObj, 16> values_;
+  ObSEArray<ObObj, 16> cells_;
+  ObNewRow row_;
+};
+} // namespace
+
 int infer_csv_file_schema(const ObString &path, ObIAllocator &allocator,
                           ObIArray<FileTableColumn> &columns)
 {
@@ -641,6 +942,31 @@ int create_glob_scan(const TableFunctionScanContext &context, ITableFunctionScan
   void *memory = context.allocator_.alloc(sizeof(GlobScan));
   if (OB_ISNULL(memory)) { return OB_ALLOCATE_MEMORY_FAILED; }
   scan = new (memory) GlobScan(context);
+  return OB_SUCCESS;
+}
+
+int infer_json_file_schema(const ObString &path, ObIAllocator &allocator,
+                           ObIArray<FileTableColumn> &columns)
+{
+  int ret = OB_SUCCESS;
+  ObArenaAllocator file_alloc("JsonSchema");
+  char *data = nullptr;
+  int64_t size = 0;
+  ObSEArray<ObString, 64> fields;
+  int64_t row_count = 0;
+  int64_t column_count = 0;
+  if (OB_FAIL(read_whole_file(path, file_alloc, data, size))) {
+  } else if (OB_FAIL(parse_jsonl_buffer(data, size, file_alloc, fields, row_count, column_count))) {
+  } else if (OB_FAIL(infer_from_fields(allocator, fields, row_count, column_count, columns))) {
+  }
+  return ret;
+}
+
+int create_read_json_scan(const TableFunctionScanContext &context, ITableFunctionScan *&scan)
+{
+  void *memory = context.allocator_.alloc(sizeof(ReadJsonScan));
+  if (OB_ISNULL(memory)) { return OB_ALLOCATE_MEMORY_FAILED; }
+  scan = new (memory) ReadJsonScan(context);
   return OB_SUCCESS;
 }
 } // namespace sql

@@ -207,6 +207,7 @@ public:
   int resolve_registered_table_function(const ParseNode &node, TableItem *&item);
   int bind_json_table_function(const TableFunctionCall &call, TableItem *&item);
   int bind_file_table_function(const TableFunctionCall &call, TableItem *&item);
+  int bind_file_json_table_function(const TableFunctionCall &call, TableItem *&item);
   int bind_glob_table_function(const TableFunctionCall &call, TableItem *&item);
   int bind_fixed_table_function(const TableFunctionCall &call, TableItem *&item);
   int bind_unnest_table_function(const TableFunctionCall &call, TableItem *&item);

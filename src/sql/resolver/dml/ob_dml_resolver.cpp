@@ -3703,6 +3703,81 @@ int ObDMLResolver::bind_file_table_function(const TableFunctionCall &call, Table
   return ret;
 }
 
+int ObDMLResolver::bind_file_json_table_function(const TableFunctionCall &call, TableItem *&item)
+{
+  int ret = OB_SUCCESS;
+  ObString path;
+  ObSEArray<FileTableColumn, 16> columns;
+  bool file_sql_enabled = false;
+  if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, file_sql_enabled))) {
+  } else if (!file_sql_enabled) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "file table function, set session enable_file_sql = ON first");
+  } else if (OB_ISNULL(call.arguments_) || call.arguments_->num_child_ < 1) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_USER_ERROR(OB_INVALID_ARGUMENT, "read_json requires a file path");
+  } else {
+    // First positional argument is the path
+    const ParseNode *path_node = nullptr;
+    for (int64_t i = 0; i < call.arguments_->num_child_; ++i) {
+      if (!is_table_function_option(call.arguments_->children_[i])) {
+        path_node = call.arguments_->children_[i];
+        break;
+      }
+    }
+    if (OB_ISNULL(path_node) || OB_ISNULL(path_node->str_value_) || path_node->str_len_ <= 0) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "read_json path must be a string literal");
+    } else {
+      path.assign_ptr(path_node->str_value_, static_cast<int32_t>(path_node->str_len_));
+    }
+  }
+  // Validate named options: only format='newline_delimited' is accepted.
+  for (int64_t i = 0; OB_SUCC(ret) && OB_NOT_NULL(call.arguments_) &&
+       i < call.arguments_->num_child_; ++i) {
+    const ParseNode *child = call.arguments_->children_[i];
+    if (!is_table_function_option(child)) { continue; }
+    const ParseNode *name_node = child->children_[0];
+    const ParseNode *val_node = child->children_[1];
+    ObString opt_name(static_cast<int32_t>(name_node->str_len_), name_node->str_value_);
+    if (0 == opt_name.case_compare("format")) {
+      // Accept 'newline_delimited' (the only supported format)
+      if (OB_NOT_NULL(val_node) && OB_NOT_NULL(val_node->str_value_) && val_node->str_len_ > 0) {
+        ObString fmt_val(static_cast<int32_t>(val_node->str_len_), val_node->str_value_);
+        if (0 != fmt_val.case_compare("newline_delimited")) {
+          ret = OB_NOT_SUPPORTED;
+          LOG_USER_ERROR(OB_NOT_SUPPORTED, "read_json format other than newline_delimited");
+        }
+      }
+    } else {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "this read_json option");
+    }
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_FAIL(infer_json_file_schema(path, *allocator_, columns))) {
+  } else if (OB_FAIL(create_function_scan_item(call, item))) {
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {
+      ObObjMeta meta;
+      ObAccuracy accuracy;
+      meta.set_type(columns.at(i).type_);
+      if (ObVarcharType == columns.at(i).type_) {
+        meta.set_collation_level(CS_LEVEL_IMPLICIT);
+        meta.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+        accuracy.set_length(1024);
+      }
+      ColumnItem *bound = nullptr;
+      ret = resolve_function_table_column_item(*item, meta, accuracy, columns.at(i).name_,
+                                               OB_APP_MIN_COLUMN_ID + i, bound);
+      if (OB_SUCC(ret) && !columns.at(i).nullable_) {
+        bound->expr_->set_result_flag(NOT_NULL_FLAG);
+      }
+    }
+  }
+  return ret;
+}
+
 int ObDMLResolver::bind_glob_table_function(const TableFunctionCall &call, TableItem *&item)
 {
   int ret = OB_SUCCESS;
