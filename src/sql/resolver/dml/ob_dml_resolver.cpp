@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/table_function/table_function.h"
 #include "sql/table_function/file_table_function.h"
+#include "sql/table_function/parquet_reader.h"
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
 #include "sql/resolver/ob_resolver_utils.h"
@@ -3777,6 +3778,76 @@ int ObDMLResolver::bind_file_json_table_function(const TableFunctionCall &call, 
   }
   if (OB_FAIL(ret)) {
   } else if (OB_FAIL(infer_json_file_schema(path, *allocator_, columns))) {
+  } else if (OB_FAIL(create_function_scan_item(call, item))) {
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {
+      ObObjMeta meta;
+      ObAccuracy accuracy;
+      meta.set_type(columns.at(i).type_);
+      if (ObVarcharType == columns.at(i).type_) {
+        meta.set_collation_level(CS_LEVEL_IMPLICIT);
+        meta.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+        accuracy.set_length(1024);
+      }
+      ColumnItem *bound = nullptr;
+      ret = resolve_function_table_column_item(*item, meta, accuracy, columns.at(i).name_,
+                                               OB_APP_MIN_COLUMN_ID + i, bound);
+      if (OB_SUCC(ret) && !columns.at(i).nullable_) {
+        bound->expr_->set_result_flag(NOT_NULL_FLAG);
+      }
+    }
+  }
+  return ret;
+}
+
+int ObDMLResolver::bind_file_parquet_table_function(const TableFunctionCall &call, TableItem *&item)
+{
+  int ret = OB_SUCCESS;
+  ObString path;
+  ObSEArray<FileTableColumn, 16> columns;
+  bool file_sql_enabled = false;
+  if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, file_sql_enabled))) {
+  } else if (!file_sql_enabled) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "file table function, set session enable_file_sql = ON first");
+  } else if (OB_ISNULL(call.arguments_) || call.arguments_->num_child_ < 1) {
+    ret = OB_INVALID_ARGUMENT;
+    LOG_USER_ERROR(OB_INVALID_ARGUMENT, "read_parquet requires a file path");
+  } else {
+    // First positional argument is the path
+    const ParseNode *path_node = nullptr;
+    for (int64_t i = 0; i < call.arguments_->num_child_; ++i) {
+      if (!is_table_function_option(call.arguments_->children_[i])) {
+        path_node = call.arguments_->children_[i];
+        break;
+      }
+    }
+    if (OB_ISNULL(path_node) || OB_ISNULL(path_node->str_value_) || path_node->str_len_ <= 0) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "read_parquet path must be a string literal");
+    } else {
+      path.assign_ptr(path_node->str_value_, static_cast<int32_t>(path_node->str_len_));
+    }
+    // read_parquet accepts no named options.
+    for (int64_t i = 0; OB_SUCC(ret) && i < call.arguments_->num_child_; ++i) {
+      if (is_table_function_option(call.arguments_->children_[i])) {
+        ret = OB_NOT_SUPPORTED;
+        LOG_USER_ERROR(OB_NOT_SUPPORTED, "this read_parquet option");
+      }
+    }
+  }
+  // secure_file_priv check for read_parquet
+  if (OB_SUCC(ret)) {
+    ObString secure_file_priv;
+    if (OB_FAIL(session_info_->get_secure_file_priv(secure_file_priv))) {
+    } else if (!secure_file_priv.empty() && 0 != secure_file_priv.case_compare("NULL")) {
+      if (OB_FAIL(ObResolverUtils::check_secure_path(secure_file_priv, path))) {
+        LOG_WARN("secure_file_priv check failed for read_parquet", K(ret), K(path));
+      }
+    }
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_FAIL(infer_parquet_file_schema(path, *allocator_, columns))) {
   } else if (OB_FAIL(create_function_scan_item(call, item))) {
   } else {
     for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {

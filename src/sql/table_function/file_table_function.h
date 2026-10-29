@@ -26,6 +26,7 @@ namespace sql
 constexpr uint64_t READ_CSV_FUNCTION_ID = 5;
 constexpr uint64_t GLOB_FUNCTION_ID = 6;
 constexpr uint64_t READ_JSON_FUNCTION_ID = 7;
+constexpr uint64_t READ_PARQUET_FUNCTION_ID = 8;
 
 // Column inferred from a file.  The resolver registers one ColumnItem per entry,
 // the scan converts every field with the same type class.

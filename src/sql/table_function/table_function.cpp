@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/table_function/table_function.h"
 #include "sql/table_function/file_table_function.h"
+#include "sql/table_function/parquet_reader.h"
 #include "sql/resolver/dml/ob_dml_resolver.h"
 #include "sql/parser/parse_node.h"
 #include "lib/charset/ob_charset.h"
@@ -39,6 +40,8 @@ int bind_glob_table(ObDMLResolver &resolver, const TableFunctionCall &call, Tabl
 { return resolver.bind_glob_table_function(call, item); }
 int bind_file_json_table(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
 { return resolver.bind_file_json_table_function(call, item); }
+int bind_file_parquet_table(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
+{ return resolver.bind_file_parquet_table_function(call, item); }
 int bind_hybrid(ObDMLResolver &resolver, const TableFunctionCall &call, TableItem *&item)
 { return resolver.bind_hybrid_table_function(call, item); }
 TableFunctionColumn generator_column()
@@ -69,7 +72,10 @@ const TableFunctionDescriptor BUILTINS[] = {
    bind_glob_table, create_glob_scan},
   {READ_JSON_FUNCTION_ID, "read_json", "read_json(path)",
    "Infers columns from JSONL key union and scans the file.", 1, 1, nullptr, 0,
-   bind_file_json_table, create_read_json_scan}
+   bind_file_json_table, create_read_json_scan},
+  {READ_PARQUET_FUNCTION_ID, "read_parquet", "read_parquet(path)",
+   "Infers columns from the Parquet footer and scans the file.", 1, 1, nullptr, 0,
+   bind_file_parquet_table, create_read_parquet_scan}
 };
 }
 

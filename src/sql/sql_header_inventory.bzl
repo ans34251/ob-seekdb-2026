@@ -474,6 +474,7 @@ SQL_PRIVATE_HEADERS = [
     "engine/basic/ob_function_table_op.h",
     "table_function/table_function.h",
     "table_function/file_table_function.h",
+    "table_function/parquet_reader.h",
     "engine/basic/ob_group_join_buffer.h",
     "engine/basic/ob_hash_partitioning_basic.h",
     "engine/basic/ob_hash_partitioning_infrastructure_op.h",
