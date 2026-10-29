@@ -3641,6 +3641,44 @@ int ObDMLResolver::bind_file_table_function(const TableFunctionCall &call, Table
       path.assign_ptr(path_node->str_value_, static_cast<int32_t>(path_node->str_len_));
     }
   }
+  // Validate named options: header (accepted, ignored) and sample_size (only -1).
+  for (int64_t i = 0; OB_SUCC(ret) && OB_NOT_NULL(call.arguments_) &&
+       i < call.arguments_->num_child_; ++i) {
+    const ParseNode *child = call.arguments_->children_[i];
+    if (!is_table_function_option(child)) { continue; }
+    const ParseNode *name_node = child->children_[0];
+    const ParseNode *val_node = child->children_[1];
+    ObString opt_name(static_cast<int32_t>(name_node->str_len_), name_node->str_value_);
+    if (0 == opt_name.case_compare("header")) {
+      // Always parse header row; option accepted silently.
+    } else if (0 == opt_name.case_compare("sample_size")) {
+      // Only full-scan inference (-1) is supported.
+      bool is_neg_one = false;
+      if (OB_NOT_NULL(val_node)) {
+        if (T_OP_NEG == val_node->type_ && val_node->num_child_ >= 1 &&
+            OB_NOT_NULL(val_node->children_[0])) {
+          const ParseNode *inner = val_node->children_[0];
+          if (1 == inner->value_ ||
+              (OB_NOT_NULL(inner->str_value_) && inner->str_len_ == 1 &&
+               '1' == inner->str_value_[0])) {
+            is_neg_one = true;
+          }
+        } else if (-1 == val_node->value_) {
+          is_neg_one = true;
+        } else if (OB_NOT_NULL(val_node->str_value_) && val_node->str_len_ == 2 &&
+                   '-' == val_node->str_value_[0] && '1' == val_node->str_value_[1]) {
+          is_neg_one = true;
+        }
+      }
+      if (!is_neg_one) {
+        ret = OB_NOT_SUPPORTED;
+        LOG_USER_ERROR(OB_NOT_SUPPORTED, "sample_size values other than -1");
+      }
+    } else {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "this read_csv option");
+    }
+  }
   if (OB_FAIL(ret)) {
   } else if (OB_FAIL(infer_csv_file_schema(path, *allocator_, columns))) {
   } else if (OB_FAIL(create_function_scan_item(call, item))) {
@@ -3673,6 +3711,16 @@ int ObDMLResolver::bind_glob_table_function(const TableFunctionCall &call, Table
   } else if (!file_sql_enabled) {
     ret = OB_NOT_SUPPORTED;
     LOG_USER_ERROR(OB_NOT_SUPPORTED, "file table function, set session enable_file_sql = ON first");
+  }
+  // glob() accepts no named options.
+  for (int64_t i = 0; OB_SUCC(ret) && OB_NOT_NULL(call.arguments_) &&
+       i < call.arguments_->num_child_; ++i) {
+    if (is_table_function_option(call.arguments_->children_[i])) {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "named options for glob()");
+    }
+  }
+  if (OB_FAIL(ret)) {
   } else if (OB_FAIL(create_function_scan_item(call, item))) {
   } else {
     // glob exposes one VARCHAR column holding each matched path.

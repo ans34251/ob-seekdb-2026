@@ -384,7 +384,7 @@ END_P SET_VAR DELIMITER
 %type <node> date_unit date_params timestamp_params
 %type <node> drop_table_stmt table_list drop_view_stmt table_or_tables
 %type <node> explain_stmt explainable_stmt format_name kill_stmt create_outline_stmt alter_outline_stmt drop_outline_stmt opt_outline_target
-%type <node> expr_list expr expr_const conf_const simple_expr simple_expr_list expr_or_default bit_expr bool_pri predicate explain_or_desc pl_expr_stmt
+%type <node> expr_list expr expr_const conf_const simple_expr expr_or_default bit_expr bool_pri predicate explain_or_desc pl_expr_stmt
 %type <node> column_ref multi_delete_table
 %type <node> case_expr func_expr in_expr sub_query_flag search_expr
 %type <node> case_arg when_clause_list when_clause case_default
@@ -498,6 +498,7 @@ END_P SET_VAR DELIMITER
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters
 %type <node> table_function_expr table_function_arguments table_function_column_aliases
+%type <node> tf_option_list tf_option
 %type <node> json_table_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
@@ -1632,16 +1633,6 @@ simple_expr collation %prec NEG
 }
 ;
 
-simple_expr_list:
-simple_expr
-{
-  malloc_list_node($$, result->malloc_pool_, T_EXPR_LIST, 2, 1, $1);
-}
-| simple_expr_list ',' simple_expr
-{
-  push_back_list(result->malloc_pool_, result, $$, $1, $3);
-}
-;
 
 search_expr:
 expr_const
@@ -17427,8 +17418,36 @@ table_function_column_aliases:
 ;
 
 table_function_arguments:
-/* empty */ { $$ = NULL; }
-| simple_expr_list { $$ = $1; }
+/* empty */
+{
+  $$ = NULL;
+}
+| simple_expr
+{
+  malloc_list_node($$, result->malloc_pool_, T_EXPR_LIST, 2, 1, $1);
+}
+| simple_expr ',' tf_option_list
+{
+  push_front_list(result->malloc_pool_, result, $$, $3, $1);
+}
+;
+
+tf_option_list:
+tf_option
+{
+  malloc_list_node($$, result->malloc_pool_, T_EXPR_LIST, 4, 1, $1);
+}
+| tf_option_list ',' tf_option
+{
+  push_back_list(result->malloc_pool_, result, $$, $1, $3);
+}
+;
+
+tf_option:
+relation_name COMP_EQ simple_expr
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_EQ, 2, $1, $3);
+}
 ;
 
 table_function_expr:
