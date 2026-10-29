@@ -1771,6 +1771,10 @@ stmt::StmtType ObResolverUtils::get_stmt_type_by_item_type(const ObItemType item
         type = stmt::T_LOAD_DATA;
       }
       break;
+      case T_COPY_TO: {
+        type = stmt::T_COPY_TO;
+      }
+      break;
       case T_LOCK_TABLE: {
         type = stmt::T_LOCK_TABLE;
       }

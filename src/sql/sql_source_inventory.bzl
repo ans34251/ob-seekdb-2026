@@ -275,6 +275,7 @@ SQL_UNITY_GROUPS = [
         srcs = [
             "src/sql/engine/cmd/ob_alter_system_executor.cpp",
             "src/sql/engine/cmd/ob_analyze_executor.cpp",
+            "src/sql/engine/cmd/ob_copy_to_executor.cpp",
             "src/sql/engine/cmd/ob_database_executor.cpp",
             "src/sql/engine/cmd/ob_dcl_executor.cpp",
             "src/sql/engine/cmd/ob_empty_query_executor.cpp",
@@ -1370,6 +1371,7 @@ SQL_UNITY_GROUPS = [
             "src/sql/resolver/cmd/ob_set_transaction_resolver.cpp",
             "src/sql/resolver/cmd/ob_show_resolver.cpp",
             "src/sql/resolver/cmd/ob_diff_table_resolver.cpp",
+            "src/sql/resolver/cmd/ob_copy_to_resolver.cpp",
             "src/sql/resolver/cmd/ob_merge_table_resolver.cpp",
             "src/sql/resolver/cmd/ob_variable_set_resolver.cpp",
             "src/sql/resolver/cmd/ob_variable_set_stmt.cpp",

@@ -2278,6 +2278,9 @@ typedef enum ObItemType
   T_TABLE_FUNCTION_CALL = 4930,
   T_SHOW_TABLE_FUNCTIONS = 4931,
   T_DESCRIBE_TABLE_FUNCTION = 4932,
+  T_COPY_TO = 4933,
+  T_COPY_OPTION_LIST = 4934,
+  T_COPY_OPTION = 4935,
   T_MAX //Attention: add a new type before T_MAX
 } ObItemType;
 

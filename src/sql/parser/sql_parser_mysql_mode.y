@@ -475,6 +475,7 @@ END_P SET_VAR DELIMITER
 %type <node> load_data_stmt opt_load_local opt_duplicate opt_compression opt_load_charset opt_load_ignore_rows infile_string
 %type <node> lines_or_rows opt_field_or_var_spec field_or_vars_list field_or_vars opt_load_set_spec opt_load_data_extended_option_list load_data_extended_option_list load_data_extended_option
 %type <node> load_set_list load_set_element load_data_with_opt_hint
+%type <node> copy_to_stmt copy_option_list copy_option
 %type <node> opt_match_option opt_column_reference opt_reference_option_list reference_option require_specification tls_option_list tls_option
 %type <ival> match_action
 %type <node> opt_resource_option resource_option_list resource_option
@@ -652,6 +653,7 @@ stmt:
   | flush_privileges_stmt { $$ = $1; check_question_mark($$, result); }
   | dump_memory_stmt  { $$ = $1; check_question_mark($$, result); }
   | get_diagnostics_stmt    { $$ = $1; question_mark_issue($$, result); }
+  | copy_to_stmt            { $$ = $1; check_question_mark($$, result); }
   | pl_expr_stmt            { $$ = $1; question_mark_issue($$, result); }
   | method_opt
   {
@@ -4338,6 +4340,69 @@ LOGFILE opt_equal_mark STRING_VALUE
 {
   (void)($2);
   malloc_non_terminal_node($$, result->malloc_pool_, T_LOAD_DATA_BAD_FILE, 1, $3);
+}
+;
+
+/*****************************************************************************
+ *
+ *	COPY (query) TO file grammar
+ *
+ *****************************************************************************/
+copy_to_stmt:
+COPY select_with_parens TO STRING_VALUE '(' copy_option_list ')'
+{
+  ParseNode *option_list = NULL;
+  merge_nodes(option_list, result, T_COPY_OPTION_LIST, $6);
+  /* Store the SELECT SQL text (without outer parens) in a VARCHAR node */
+  ParseNode *select_text_node = NULL;
+  malloc_terminal_node(select_text_node, result->malloc_pool_, T_VARCHAR);
+  int64_t sel_start = @2.first_column + 1; /* skip '(' */
+  int64_t sel_end = @2.last_column - 1;    /* skip ')' */
+  if (sel_start >= 1 && sel_end >= sel_start && NULL != result->input_sql_) {
+    int64_t sel_len = sel_end - sel_start + 1;
+    char *sel_buf = (char *)parser_alloc(result->malloc_pool_, sel_len + 1);
+    if (NULL != sel_buf) {
+      memcpy(sel_buf, result->input_sql_ + sel_start - 1, sel_len);
+      sel_buf[sel_len] = '\0';
+      select_text_node->str_value_ = sel_buf;
+      select_text_node->str_len_ = sel_len;
+    } else {
+      yyerror(NULL, result, "No more space for copy select text\n");
+      YYABORT_NO_MEMORY;
+    }
+  } else {
+    select_text_node->str_value_ = NULL;
+    select_text_node->str_len_ = 0;
+  }
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_TO, 4, select_text_node, $4, option_list, $2);
+}
+;
+
+copy_option_list:
+copy_option
+{
+  $$ = $1;
+}
+| copy_option_list ',' copy_option
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
+}
+;
+
+copy_option:
+FORMAT NAME_OB
+{
+  ParseNode *fmt_name = NULL;
+  make_name_node(fmt_name, result->malloc_pool_, "format");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_OPTION, 2, fmt_name, $2);
+}
+| NAME_OB
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_OPTION, 2, $1, NULL);
+}
+| NAME_OB STRING_VALUE
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_COPY_OPTION, 2, $1, $2);
 }
 ;
 

@@ -86,6 +86,7 @@
 #include "sql/resolver/cmd/ob_anonymous_block_resolver.h"
 #include "sql/resolver/cmd/ob_call_procedure_resolver.h"
 #include "sql/resolver/cmd/ob_load_data_resolver.h"
+#include "sql/resolver/cmd/ob_copy_to_resolver.h"
 #include "sql/resolver/prepare/ob_execute_resolver.h"
 #include "sql/resolver/prepare/ob_deallocate_resolver.h"
 #include "sql/resolver/ddl/ob_purge_resolver.h"
@@ -577,6 +578,10 @@ int ObResolver::resolve(IsPrepared if_prepared, const ParseNode &parse_tree, ObS
       case T_LOAD_DATA_URL:
       case T_LOAD_DATA: {
         REGISTER_STMT_RESOLVER(LoadData);
+        break;
+      }
+      case T_COPY_TO: {
+        REGISTER_STMT_RESOLVER(CopyTo);
         break;
       }
       case T_SET_TABLE_COMMENT:
