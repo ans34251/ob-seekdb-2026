@@ -19,6 +19,7 @@
 #include "sql/table_function/file_table_function.h"
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
+#include "sql/resolver/ob_resolver_utils.h"
 #include "sql/resolver/dml/ob_view_table_resolver.h"
 #include "sql/optimizer/ob_optimizer_util.h"
 #include "sql/resolver/dml/ob_default_value_utils.h"
@@ -3641,6 +3642,16 @@ int ObDMLResolver::bind_file_table_function(const TableFunctionCall &call, Table
       path.assign_ptr(path_node->str_value_, static_cast<int32_t>(path_node->str_len_));
     }
   }
+  // secure_file_priv check: only enforce when the variable is non-empty
+  if (OB_SUCC(ret)) {
+    ObString secure_file_priv;
+    if (OB_FAIL(session_info_->get_secure_file_priv(secure_file_priv))) {
+    } else if (!secure_file_priv.empty() && 0 != secure_file_priv.case_compare("NULL")) {
+      if (OB_FAIL(ObResolverUtils::check_secure_path(secure_file_priv, path))) {
+        LOG_WARN("secure_file_priv check failed for read_csv", K(ret), K(path));
+      }
+    }
+  }
   // Validate named options: header (accepted, ignored) and sample_size (only -1).
   for (int64_t i = 0; OB_SUCC(ret) && OB_NOT_NULL(call.arguments_) &&
        i < call.arguments_->num_child_; ++i) {
@@ -3732,6 +3743,16 @@ int ObDMLResolver::bind_file_json_table_function(const TableFunctionCall &call, 
       path.assign_ptr(path_node->str_value_, static_cast<int32_t>(path_node->str_len_));
     }
   }
+  // secure_file_priv check for read_json
+  if (OB_SUCC(ret)) {
+    ObString secure_file_priv;
+    if (OB_FAIL(session_info_->get_secure_file_priv(secure_file_priv))) {
+    } else if (!secure_file_priv.empty() && 0 != secure_file_priv.case_compare("NULL")) {
+      if (OB_FAIL(ObResolverUtils::check_secure_path(secure_file_priv, path))) {
+        LOG_WARN("secure_file_priv check failed for read_json", K(ret), K(path));
+      }
+    }
+  }
   // Validate named options: only format='newline_delimited' is accepted.
   for (int64_t i = 0; OB_SUCC(ret) && OB_NOT_NULL(call.arguments_) &&
        i < call.arguments_->num_child_; ++i) {
@@ -3786,6 +3807,20 @@ int ObDMLResolver::bind_glob_table_function(const TableFunctionCall &call, Table
   } else if (!file_sql_enabled) {
     ret = OB_NOT_SUPPORTED;
     LOG_USER_ERROR(OB_NOT_SUPPORTED, "file table function, set session enable_file_sql = ON first");
+  }
+  // secure_file_priv check for glob: extract the pattern from the first positional arg
+  if (OB_SUCC(ret) && OB_NOT_NULL(call.arguments_) && call.arguments_->num_child_ >= 1) {
+    const ParseNode *pattern_node = call.arguments_->children_[0];
+    if (OB_NOT_NULL(pattern_node) && OB_NOT_NULL(pattern_node->str_value_) && pattern_node->str_len_ > 0) {
+      ObString pattern(static_cast<int32_t>(pattern_node->str_len_), pattern_node->str_value_);
+      ObString secure_file_priv;
+      if (OB_FAIL(session_info_->get_secure_file_priv(secure_file_priv))) {
+      } else if (!secure_file_priv.empty() && 0 != secure_file_priv.case_compare("NULL")) {
+        if (OB_FAIL(ObResolverUtils::check_secure_path(secure_file_priv, pattern))) {
+          LOG_WARN("secure_file_priv check failed for glob", K(ret), K(pattern));
+        }
+      }
+    }
   }
   // glob() accepts no named options.
   for (int64_t i = 0; OB_SUCC(ret) && OB_NOT_NULL(call.arguments_) &&

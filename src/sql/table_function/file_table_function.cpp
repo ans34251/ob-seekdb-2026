@@ -27,6 +27,7 @@
 #include "sql/engine/ob_exec_context.h"
 #include "common/json_type/ob_json_parse.h"
 #include "common/json_type/ob_json_tree.h"
+#include "common/timezone/ob_time_convert.h"
 
 namespace oceanbase
 {
@@ -296,6 +297,8 @@ ObObjType type_class_to_obj_type(int type_class)
   return (CTC_BOOL == type_class) ? ObTinyIntType
        : (CTC_INT == type_class) ? ObIntType
        : (CTC_DOUBLE == type_class) ? ObDoubleType
+       : (CTC_DATE == type_class) ? ObDateType
+       : (CTC_DATETIME == type_class) ? ObDateTimeType
        : ObVarcharType;
 }
 
@@ -473,9 +476,6 @@ private:
     return ret;
   }
 
-  // DATE and DATETIME columns are exposed as VARCHAR for now: the rendered text
-  // matches the reference output once 'T' is folded to a space, and real
-  // ObDateType/ObDateTimeType values land with the DESCRIBE work.
   int convert_field(const ObString &text, int type_class, ObObj &value)
   {
     int ret = OB_SUCCESS;
@@ -487,16 +487,37 @@ private:
       value.set_int(strtoll(text.ptr(), nullptr, 10));
     } else if (CTC_DOUBLE == type_class) {
       value.set_double(strtod(text.ptr(), nullptr));
-    } else if (CTC_DATETIME == type_class && text.length() > 10 && 'T' == text.ptr()[10]) {
-      char *copy = static_cast<char *>(allocator_.alloc(text.length()));
-      if (OB_ISNULL(copy)) {
-        ret = OB_ALLOCATE_MEMORY_FAILED;
-      } else {
-        MEMCPY(copy, text.ptr(), text.length());
-        copy[10] = ' ';
-        value.set_varchar(ObString(static_cast<int32_t>(text.length()), copy));
+    } else if (CTC_DATE == type_class) {
+      int32_t date_val = 0;
+      if (OB_SUCCESS != ObTimeConverter::str_to_date(text, date_val)) {
+        value.set_varchar(text);
         value.set_collation_level(CS_LEVEL_IMPLICIT);
         value.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+      } else {
+        value.set_date(date_val);
+      }
+    } else if (CTC_DATETIME == type_class) {
+      ObString dt_text = text;
+      if (text.length() > 10 && 'T' == text.ptr()[10]) {
+        char *copy = static_cast<char *>(allocator_.alloc(text.length()));
+        if (OB_ISNULL(copy)) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          MEMCPY(copy, text.ptr(), text.length());
+          copy[10] = ' ';
+          dt_text.assign_ptr(copy, static_cast<int32_t>(text.length()));
+        }
+      }
+      if (OB_SUCC(ret)) {
+        int64_t dt_val = 0;
+        ObTimeConvertCtx cvrt_ctx(nullptr, false);
+        if (OB_SUCCESS != ObTimeConverter::str_to_datetime(dt_text, cvrt_ctx, dt_val)) {
+          value.set_varchar(dt_text);
+          value.set_collation_level(CS_LEVEL_IMPLICIT);
+          value.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+        } else {
+          value.set_datetime(dt_val);
+        }
       }
     } else {
       value.set_varchar(text);
@@ -878,16 +899,37 @@ private:
       value.set_int(strtoll(text.ptr(), nullptr, 10));
     } else if (CTC_DOUBLE == type_class) {
       value.set_double(strtod(text.ptr(), nullptr));
-    } else if (CTC_DATETIME == type_class && text.length() > 10 && 'T' == text.ptr()[10]) {
-      char *copy = static_cast<char *>(allocator_.alloc(text.length()));
-      if (OB_ISNULL(copy)) {
-        ret = OB_ALLOCATE_MEMORY_FAILED;
-      } else {
-        MEMCPY(copy, text.ptr(), text.length());
-        copy[10] = ' ';
-        value.set_varchar(ObString(static_cast<int32_t>(text.length()), copy));
+    } else if (CTC_DATE == type_class) {
+      int32_t date_val = 0;
+      if (OB_SUCCESS != ObTimeConverter::str_to_date(text, date_val)) {
+        value.set_varchar(text);
         value.set_collation_level(CS_LEVEL_IMPLICIT);
         value.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+      } else {
+        value.set_date(date_val);
+      }
+    } else if (CTC_DATETIME == type_class) {
+      ObString dt_text = text;
+      if (text.length() > 10 && 'T' == text.ptr()[10]) {
+        char *copy = static_cast<char *>(allocator_.alloc(text.length()));
+        if (OB_ISNULL(copy)) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          MEMCPY(copy, text.ptr(), text.length());
+          copy[10] = ' ';
+          dt_text.assign_ptr(copy, static_cast<int32_t>(text.length()));
+        }
+      }
+      if (OB_SUCC(ret)) {
+        int64_t dt_val = 0;
+        ObTimeConvertCtx cvrt_ctx(nullptr, false);
+        if (OB_SUCCESS != ObTimeConverter::str_to_datetime(dt_text, cvrt_ctx, dt_val)) {
+          value.set_varchar(dt_text);
+          value.set_collation_level(CS_LEVEL_IMPLICIT);
+          value.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+        } else {
+          value.set_datetime(dt_val);
+        }
       }
     } else {
       value.set_varchar(text);
