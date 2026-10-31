@@ -46,13 +46,20 @@ public:
         cache_stop_(allocator),
         dict_main_(nullptr),
         dict_quan_(nullptr),
-        dict_stop_(nullptr)
+        dict_stop_(nullptr),
+        owns_dicts_(true)
   {
   }
 
   virtual ~ObIKFTParser() { reset(); }
 
   int init(const ObFTParserParam &param);
+
+  /**
+   * Reuse parser for a new document: resets text-specific state (ctx_)
+   * while preserving shared dicts and segmenters.
+   */
+  int reuse(const ObFTParserParam &param);
 
   int get_next_token(const char *&word,
                      int64_t &word_len,
@@ -106,6 +113,7 @@ private:
   ObIFTDict *dict_main_;
   ObIFTDict *dict_quan_;
   ObIFTDict *dict_stop_;
+  bool owns_dicts_;  // false when using shared dicts from ObFTParseData
 
   DISABLE_COPY_ASSIGN(ObIKFTParser);
 };

@@ -75,8 +75,11 @@ int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
 {
   int ret = OB_SUCCESS;
   
-  
-  common::ObArenaAllocator allocator(lib::ObMemAttr("ChkStopWord"));
+  // Thread-local allocator reuse: avoids constructing/destroying an ObArenaAllocator
+  // for every token checked (hot path during bulk indexing and tokenization).
+  static thread_local common::ObArenaAllocator tl_allocator(lib::ObMemAttr("ChkStopWord"));
+  tl_allocator.reuse();
+
   if (OB_UNLIKELY(!inited_)) {
     ret = OB_NOT_INIT;
   } else if (OB_UNLIKELY(word.empty())) {
@@ -85,7 +88,7 @@ int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
     common::ObString cmp_str;
     // do nothing set out with in if type is the same.
     if (OB_FAIL(common::ObCharset::charset_convert(
-                                       allocator,
+                                       tl_allocator,
                                        word.get_word().get_string(),
                                        word.get_collation_type(),
                                        stopword_type_.get_collation_type(),

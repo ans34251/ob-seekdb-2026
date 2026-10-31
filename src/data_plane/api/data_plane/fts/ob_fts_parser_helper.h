@@ -17,6 +17,7 @@
 #ifndef OB_FTS_PARSER_HELPER_H_
 #define OB_FTS_PARSER_HELPER_H_
 
+#include <atomic>
 #include "lib/allocator/ob_fifo_allocator.h"
 #include "lib/charset/ob_charset.h"
 #include "lib/string/ob_string.h"
@@ -39,6 +40,8 @@ namespace storage
 class ObStopWordChecker;
 class ObFTDictHub;
 class ObAddWord;
+class ObIFTDict;
+class ObFTCacheRangeContainer;
 
 #define FTS_BUILD_IN_PARSER_LIST                                                                   \
   FT_PARSER_TYPE(FTP_SPACE, space)                                                                 \
@@ -120,15 +123,41 @@ public:
   ObStopWordChecker *stop_word_checker() const { return stop_word_checker_; }
   int get_dict_hub(ObFTDictHub *&hub);
 
+  /**
+   * Get shared IK dictionaries (read-only, thread-safe).
+   * Built lazily on first use (during an actual FTS parse, when the KVCache
+   * and SQL layers are fully up) and then shared across all parser instances,
+   * eliminating per-call KVCache handle acquisition and dict construction.
+   * Returns OB_NOT_INIT when the dicts are not ready yet, so callers can fall
+   * back to building their own per-parser dicts.
+   */
+  int get_shared_ik_dicts(ObIFTDict *&dict_main,
+                          ObIFTDict *&dict_quan,
+                          ObIFTDict *&dict_stop);
+
 private:
   int init_and_set_stopword_list();
   int init_dict_hub();
+  int init_shared_ik_dicts();
+  void destroy_shared_ik_dicts();
 
 private:
   ObStopWordChecker *     stop_word_checker_ = nullptr;
   ObFTDictHub *           dict_hub_          = nullptr;
   common::ObFIFOAllocator handler_allocator_;
   bool                    is_inited_         = false;
+
+  // Shared IK dicts (owned by this instance, read-only after lazy build)
+  ObFTCacheRangeContainer *shared_cache_main_ = nullptr;
+  ObFTCacheRangeContainer *shared_cache_quan_ = nullptr;
+  ObFTCacheRangeContainer *shared_cache_stop_ = nullptr;
+  ObIFTDict *             shared_dict_main_   = nullptr;
+  ObIFTDict *             shared_dict_quan_   = nullptr;
+  ObIFTDict *             shared_dict_stop_   = nullptr;
+  // Lazy-build coordination: only one thread builds the shared dicts, others
+  // fall back to per-parser dicts until the shared ones are ready.
+  std::atomic<bool>       shared_dicts_started_{false};
+  std::atomic<bool>       shared_dicts_ready_{false};
 };
 
 class ObFTParseHelper final
